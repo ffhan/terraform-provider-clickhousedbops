@@ -34,6 +34,7 @@ type Client interface {
 
 	CreateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *string) (*RowPolicy, error)
 	GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *string) (*RowPolicy, error)
+	UpdateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *string) (*RowPolicy, error)
 	DeleteRowPolicy(ctx context.Context, name string, database string, table string, clusterName *string) error
 
 	CreateSettingsProfile(ctx context.Context, profile SettingsProfile, clusterName *string) (*SettingsProfile, error)

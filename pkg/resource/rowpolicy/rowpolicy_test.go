@@ -493,3 +493,185 @@ func TestRowpolicy_acceptance(t *testing.T) {
 
 	runner.RunTests(t, tests)
 }
+
+func TestRowpolicy_update(t *testing.T) {
+	clusterName := "cluster1"
+
+	granteeUserResource := resourcebuilder.
+		New("clickhousedbops_user", granteeUserName).
+		WithStringAttribute("name", granteeUserName).
+		WithFunction("password_sha256_hash_wo", "sha256", "test").
+		WithIntAttribute("password_sha256_hash_wo_version", 1)
+
+	checkAttributesFunc := func(ctx context.Context, dbopsClient dbops.Client, clusterName *string, attrs map[string]interface{}) error {
+		name := attrs["name"].(string)
+		if name == "" {
+			return fmt.Errorf("name attribute was not set")
+		}
+
+		database := attrs["database_name"].(string)
+		if database == "" {
+			return fmt.Errorf("database_name attribute was not set")
+		}
+
+		table := attrs["table_name"].(string)
+		if table == "" {
+			return fmt.Errorf("table_name attribute was not set")
+		}
+
+		var granteeUserNamePtr *string
+		if attrs["grantee_user_name"] != nil {
+			s := attrs["grantee_user_name"].(string)
+			granteeUserNamePtr = &s
+		}
+
+		if granteeUserNamePtr == nil {
+			return fmt.Errorf("grantee_user_name attribute was not set")
+		}
+
+		isRestrictive := false
+		if attrs["is_restrictive"] != nil {
+			isRestrictive = attrs["is_restrictive"].(bool)
+		}
+
+		rowPolicy := dbops.RowPolicy{
+			Name:            name,
+			Database:        database,
+			Table:           table,
+			GranteeUserName: granteeUserNamePtr,
+		}
+
+		rp, err := dbopsClient.GetRowPolicy(ctx, &rowPolicy, clusterName)
+		if err != nil {
+			return err
+		}
+
+		if rp == nil {
+			return fmt.Errorf("row policy was not found")
+		}
+
+		if name != rp.Name {
+			return fmt.Errorf("expected name to be %q, was %q", name, rp.Name)
+		}
+
+		if database != rp.Database {
+			return fmt.Errorf("expected database_name to be %q, was %q", database, rp.Database)
+		}
+
+		if table != rp.Table {
+			return fmt.Errorf("expected table_name to be %q, was %q", table, rp.Table)
+		}
+
+		if rp.IsRestrictive != isRestrictive {
+			return fmt.Errorf("expected is_restrictive to be %v, was %v", isRestrictive, rp.IsRestrictive)
+		}
+
+		return nil
+	}
+
+	tests := []runner.TestCase{
+		{
+			Name:     "Update row policy filter on single replica using Native protocol",
+			ChEnv:    map[string]string{"CONFIGFILE": "config-single.xml"},
+			Protocol: "native",
+			Resource: resourcebuilder.New(resourceType, resourceName).
+				WithStringAttribute("name", "test_policy").
+				WithStringAttribute("database_name", "system").
+				WithStringAttribute("table_name", "databases").
+				WithStringAttribute("select_filter", "name = 'default'").
+				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
+				AddDependency(granteeUserResource.Build()).
+				Build(),
+			UpdateResource: resourcebuilder.New(resourceType, resourceName).
+				WithStringAttribute("name", "test_policy").
+				WithStringAttribute("database_name", "system").
+				WithStringAttribute("table_name", "databases").
+				WithStringAttribute("select_filter", "name = 'system'").
+				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
+				AddDependency(granteeUserResource.Build()).
+				Build(),
+			ResourceName:        resourceName,
+			ResourceAddress:     fmt.Sprintf("%s.%s", resourceType, resourceName),
+			CheckAttributesFunc: checkAttributesFunc,
+		},
+		{
+			Name:     "Update row policy is_restrictive flag on single replica using Native protocol",
+			ChEnv:    map[string]string{"CONFIGFILE": "config-single.xml"},
+			Protocol: "native",
+			Resource: resourcebuilder.New(resourceType, resourceName).
+				WithStringAttribute("name", "test_policy").
+				WithStringAttribute("database_name", "system").
+				WithStringAttribute("table_name", "tables").
+				WithStringAttribute("select_filter", "database = 'default'").
+				WithBoolAttribute("is_restrictive", false).
+				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
+				AddDependency(granteeUserResource.Build()).
+				Build(),
+			UpdateResource: resourcebuilder.New(resourceType, resourceName).
+				WithStringAttribute("name", "test_policy").
+				WithStringAttribute("database_name", "system").
+				WithStringAttribute("table_name", "tables").
+				WithStringAttribute("select_filter", "database = 'default'").
+				WithBoolAttribute("is_restrictive", true).
+				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
+				AddDependency(granteeUserResource.Build()).
+				Build(),
+			ResourceName:        resourceName,
+			ResourceAddress:     fmt.Sprintf("%s.%s", resourceType, resourceName),
+			CheckAttributesFunc: checkAttributesFunc,
+		},
+		{
+			Name:     "Update row policy on replicated storage cluster using Native protocol",
+			ChEnv:    map[string]string{"CONFIGFILE": "config-replicated.xml"},
+			Protocol: "native",
+			Resource: resourcebuilder.New(resourceType, resourceName).
+				WithStringAttribute("name", "test_policy").
+				WithStringAttribute("database_name", "system").
+				WithStringAttribute("table_name", "databases").
+				WithStringAttribute("select_filter", "name = 'default'").
+				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
+				AddDependency(granteeUserResource.Build()).
+				Build(),
+			UpdateResource: resourcebuilder.New(resourceType, resourceName).
+				WithStringAttribute("name", "test_policy").
+				WithStringAttribute("database_name", "system").
+				WithStringAttribute("table_name", "databases").
+				WithStringAttribute("select_filter", "name != 'system'").
+				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
+				AddDependency(granteeUserResource.Build()).
+				Build(),
+			ResourceName:        resourceName,
+			ResourceAddress:     fmt.Sprintf("%s.%s", resourceType, resourceName),
+			CheckAttributesFunc: checkAttributesFunc,
+		},
+		{
+			Name:        "Update row policy on localfile storage cluster using HTTP protocol",
+			ChEnv:       map[string]string{"CONFIGFILE": "config-localfile.xml"},
+			ClusterName: &clusterName,
+			Protocol:    "http",
+			Resource: resourcebuilder.New(resourceType, resourceName).
+				WithStringAttribute("cluster_name", clusterName).
+				WithStringAttribute("name", "test_policy").
+				WithStringAttribute("database_name", "system").
+				WithStringAttribute("table_name", "databases").
+				WithStringAttribute("select_filter", "1").
+				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
+				AddDependency(granteeUserResource.WithStringAttribute("cluster_name", clusterName).Build()).
+				Build(),
+			UpdateResource: resourcebuilder.New(resourceType, resourceName).
+				WithStringAttribute("cluster_name", clusterName).
+				WithStringAttribute("name", "test_policy").
+				WithStringAttribute("database_name", "system").
+				WithStringAttribute("table_name", "databases").
+				WithStringAttribute("select_filter", "name = 'default'").
+				WithBoolAttribute("is_restrictive", true).
+				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
+				AddDependency(granteeUserResource.WithStringAttribute("cluster_name", clusterName).Build()).
+				Build(),
+			ResourceName:        resourceName,
+			ResourceAddress:     fmt.Sprintf("%s.%s", resourceType, resourceName),
+			CheckAttributesFunc: checkAttributesFunc,
+		},
+	}
+
+	runner.RunTests(t, tests)

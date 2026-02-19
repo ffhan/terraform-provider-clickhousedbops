@@ -263,7 +263,55 @@ func (r *Resource) Read(ctx context.Context, req resource.ReadRequest, resp *res
 }
 
 func (r *Resource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	panic("Update of row policy resource is not supported")
+	var plan, state RowPolicy
+	diags := req.State.Get(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	diags = req.Plan.Get(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	rp := dbops.RowPolicy{
+		Name:            plan.Name.ValueString(),
+		Database:        plan.Database.ValueString(),
+		Table:           plan.Table.ValueString(),
+		SelectFilter:    plan.SelectFilter.ValueString(),
+		IsRestrictive:   plan.IsRestrictive.ValueBool(),
+		GranteeUserName: plan.GranteeUserName.ValueStringPointer(),
+		GranteeRoleName: plan.GranteeRoleName.ValueStringPointer(),
+	}
+
+	updated, err := r.client.UpdateRowPolicy(ctx, rp, plan.ClusterName.ValueStringPointer())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Updating ClickHouse Row Policy",
+			"Could not update row policy, unexpected error: "+err.Error(),
+		)
+		return
+	}
+
+	if updated != nil {
+		state.Name = types.StringValue(updated.Name)
+		state.Database = types.StringValue(updated.Database)
+		state.Table = types.StringValue(updated.Table)
+		state.SelectFilter = types.StringValue(updated.SelectFilter)
+		state.IsRestrictive = types.BoolValue(updated.IsRestrictive)
+		state.GranteeUserName = types.StringPointerValue(updated.GranteeUserName)
+		state.GranteeRoleName = types.StringPointerValue(updated.GranteeRoleName)
+
+		diags = resp.State.Set(ctx, &state)
+		resp.Diagnostics.Append(diags...)
+	} else {
+		resp.Diagnostics.AddError(
+			"Error Updating ClickHouse Row Policy",
+			"The row policy was updated but could not be found in system.row_policies.",
+		)
+	}
 }
 
 func (r *Resource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

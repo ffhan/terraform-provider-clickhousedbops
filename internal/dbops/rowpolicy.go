@@ -71,6 +71,9 @@ func (i *impl) GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *str
 	sql, err := querybuilder.NewSelect(
 		[]querybuilder.Field{
 			querybuilder.NewField("short_name"),
+			querybuilder.NewField("select_filter"),
+			querybuilder.NewField("is_restrictive"),
+			querybuilder.NewField("grantee_name"),
 		},
 		"system.row_policies",
 	).WithCluster(clusterName).Where(where...).Build()
@@ -78,24 +81,122 @@ func (i *impl) GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *str
 		return nil, errors.WithMessage(err, "error building query")
 	}
 
-	found := false
+	var result *RowPolicy
 	err = i.clickhouseClient.Select(ctx, sql, func(data clickhouseclient.Row) error {
-		_, err := data.GetString("short_name")
+		name, err := data.GetString("short_name")
 		if err != nil {
 			return errors.WithMessage(err, "error scanning query result, missing 'short_name' field")
 		}
-		found = true
+
+		selectFilter, err := data.GetString("select_filter")
+		if err != nil {
+			return errors.WithMessage(err, "error scanning query result, missing 'select_filter' field")
+		}
+
+		isRestrictive, err := data.GetBool("is_restrictive")
+		if err != nil {
+			return errors.WithMessage(err, "error scanning query result, missing 'is_restrictive' field")
+		}
+
+		granteeName, err := data.GetNullableString("grantee_name")
+		if err != nil {
+			return errors.WithMessage(err, "error scanning query result, missing 'grantee_name' field")
+		}
+
+		result = &RowPolicy{
+			Name:          name,
+			Database:      rp.Database,
+			Table:         rp.Table,
+			SelectFilter:  selectFilter,
+			IsRestrictive: isRestrictive,
+		}
+
+		// Determine if grantee is user or role based on what we find
+		if granteeName != nil {
+			// In ClickHouse, we'd need to query system.users and system.roles to determine which type
+			// For now, we'll preserve the original grantee assignment if provided, or try to infer
+			if rp.GranteeUserName != nil && *rp.GranteeUserName == *granteeName {
+				result.GranteeUserName = rp.GranteeUserName
+			} else if rp.GranteeRoleName != nil && *rp.GranteeRoleName == *granteeName {
+				result.GranteeRoleName = rp.GranteeRoleName
+			} else {
+				// Try to infer by checking if name exists in users or roles
+				userExists, _ := i.userExists(ctx, *granteeName, clusterName)
+				if userExists {
+					result.GranteeUserName = granteeName
+				} else {
+					result.GranteeRoleName = granteeName
+				}
+			}
+		}
+
 		return nil
 	})
 	if err != nil {
 		return nil, errors.WithMessage(err, "error running query")
 	}
 
-	if !found {
-		return nil, nil
+	return result, nil
+}
+
+func (i *impl) userExists(ctx context.Context, userName string, clusterName *string) (bool, error) {
+	sql, err := querybuilder.NewSelect(
+		[]querybuilder.Field{querybuilder.NewField("name")},
+		"system.users",
+	).WithCluster(clusterName).Where(querybuilder.WhereEquals("name", userName)).Build()
+	if err != nil {
+		return false, err
 	}
 
-	return rp, nil
+	exists := false
+	err = i.clickhouseClient.Select(ctx, sql, func(data clickhouseclient.Row) error {
+		exists = true
+		return nil
+	})
+	return exists, err
+}
+
+func (i *impl) UpdateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *string) (*RowPolicy, error) {
+	// Retrieve current row policy
+	existing, err := i.GetRowPolicy(ctx, &rp, clusterName)
+	if err != nil {
+		return nil, errors.WithMessage(err, "Unable to get existing row policy")
+	}
+
+	if existing == nil {
+		return nil, errors.New("row policy not found")
+	}
+
+	builder := querybuilder.NewAlterRowPolicy(rp.Name, rp.Database, rp.Table)
+
+	if clusterName != nil && *clusterName != "" {
+		builder = builder.WithCluster(clusterName)
+	}
+
+	// Only include changes in the ALTER statement
+	if rp.SelectFilter != existing.SelectFilter {
+		builder = builder.SelectFilter(rp.SelectFilter)
+	}
+
+	if rp.IsRestrictive != existing.IsRestrictive {
+		builder = builder.IsRestrictive(rp.IsRestrictive)
+	}
+
+	sql, err := builder.Build()
+	if err != nil {
+		return nil, errors.WithMessage(err, "error building query")
+	}
+
+	err = i.clickhouseClient.Exec(ctx, sql)
+	if err != nil {
+		return nil, errors.WithMessage(err, "error running query")
+	}
+
+	identifier := fmt.Sprintf("%s ON %s.%s", rp.Name, rp.Database, rp.Table)
+
+	return retryWithBackoff(ctx, "row policy", identifier, func() (*RowPolicy, error) {
+		return i.GetRowPolicy(ctx, &rp, clusterName)
+	})
 }
 
 func (i *impl) DeleteRowPolicy(ctx context.Context, name string, database string, table string, clusterName *string) error {
