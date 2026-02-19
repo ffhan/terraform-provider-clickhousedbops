@@ -582,14 +582,14 @@ func TestRowpolicy_update(t *testing.T) {
 				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
 				AddDependency(granteeUserResource.Build()).
 				Build(),
-			UpdateResource: resourcebuilder.New(resourceType, resourceName).
+			UpdateResource: stringPtr(resourcebuilder.New(resourceType, resourceName).
 				WithStringAttribute("name", "test_policy").
 				WithStringAttribute("database_name", "system").
 				WithStringAttribute("table_name", "databases").
 				WithStringAttribute("select_filter", "name = 'system'").
 				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
 				AddDependency(granteeUserResource.Build()).
-				Build(),
+				Build()),
 			ResourceName:        resourceName,
 			ResourceAddress:     fmt.Sprintf("%s.%s", resourceType, resourceName),
 			CheckAttributesFunc: checkAttributesFunc,
@@ -607,7 +607,7 @@ func TestRowpolicy_update(t *testing.T) {
 				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
 				AddDependency(granteeUserResource.Build()).
 				Build(),
-			UpdateResource: resourcebuilder.New(resourceType, resourceName).
+			UpdateResource: stringPtr(resourcebuilder.New(resourceType, resourceName).
 				WithStringAttribute("name", "test_policy").
 				WithStringAttribute("database_name", "system").
 				WithStringAttribute("table_name", "tables").
@@ -615,7 +615,7 @@ func TestRowpolicy_update(t *testing.T) {
 				WithBoolAttribute("is_restrictive", true).
 				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
 				AddDependency(granteeUserResource.Build()).
-				Build(),
+				Build()),
 			ResourceName:        resourceName,
 			ResourceAddress:     fmt.Sprintf("%s.%s", resourceType, resourceName),
 			CheckAttributesFunc: checkAttributesFunc,
@@ -632,14 +632,14 @@ func TestRowpolicy_update(t *testing.T) {
 				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
 				AddDependency(granteeUserResource.Build()).
 				Build(),
-			UpdateResource: resourcebuilder.New(resourceType, resourceName).
+			UpdateResource: stringPtr(resourcebuilder.New(resourceType, resourceName).
 				WithStringAttribute("name", "test_policy").
 				WithStringAttribute("database_name", "system").
 				WithStringAttribute("table_name", "databases").
 				WithStringAttribute("select_filter", "name != 'system'").
 				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
 				AddDependency(granteeUserResource.Build()).
-				Build(),
+				Build()),
 			ResourceName:        resourceName,
 			ResourceAddress:     fmt.Sprintf("%s.%s", resourceType, resourceName),
 			CheckAttributesFunc: checkAttributesFunc,
@@ -658,7 +658,7 @@ func TestRowpolicy_update(t *testing.T) {
 				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
 				AddDependency(granteeUserResource.WithStringAttribute("cluster_name", clusterName).Build()).
 				Build(),
-			UpdateResource: resourcebuilder.New(resourceType, resourceName).
+			UpdateResource: stringPtr(resourcebuilder.New(resourceType, resourceName).
 				WithStringAttribute("cluster_name", clusterName).
 				WithStringAttribute("name", "test_policy").
 				WithStringAttribute("database_name", "system").
@@ -667,7 +667,7 @@ func TestRowpolicy_update(t *testing.T) {
 				WithBoolAttribute("is_restrictive", true).
 				WithResourceFieldReference("grantee_user_name", "clickhousedbops_user", granteeUserName, "name").
 				AddDependency(granteeUserResource.WithStringAttribute("cluster_name", clusterName).Build()).
-				Build(),
+				Build()),
 			ResourceName:        resourceName,
 			ResourceAddress:     fmt.Sprintf("%s.%s", resourceType, resourceName),
 			CheckAttributesFunc: checkAttributesFunc,
@@ -675,3 +675,8 @@ func TestRowpolicy_update(t *testing.T) {
 	}
 
 	runner.RunTests(t, tests)
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
