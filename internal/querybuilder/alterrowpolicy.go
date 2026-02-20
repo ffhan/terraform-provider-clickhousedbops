@@ -102,9 +102,9 @@ func (a *AlterRowPolicy) Build() (string, error) {
 
 	// Handle AS PERMISSIVE/RESTRICTIVE and USING clauses (independent of FOR operations)
 	if a.selectFilter != nil || a.isRestrictive != nil {
-		// Only add FOR SELECT if we haven't added other FOR operations already
-		if len(a.forOperations) == 0 {
-			sb.WriteString(" FOR SELECT")
+		// Only add FOR SELECT if no FOR operations were already added and we're modifying SELECT-related clauses
+		if len(a.forOperations) == 0 && (a.selectFilter != nil || a.isRestrictive != nil) {
+			// Don't add FOR SELECT - let user specify it explicitly if needed
 		}
 		hasChanges = true
 

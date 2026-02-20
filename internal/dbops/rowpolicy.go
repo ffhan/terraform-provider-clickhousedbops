@@ -52,13 +52,11 @@ func (i *impl) CreateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *s
 
 	fmt.Fprintf(&sb, " ON `%s`.`%s`", rp.Database, rp.Table)
 
-	// If ForOperations is empty, default to SELECT for CREATE statement
-	operations := rp.ForOperations
-	if len(operations) == 0 {
-		operations = []string{"SELECT"}
-	}
-	for _, op := range operations {
-		fmt.Fprintf(&sb, " FOR %s", op)
+	// Only add FOR clause if operations are explicitly specified
+	if len(rp.ForOperations) > 0 {
+		for _, op := range rp.ForOperations {
+			fmt.Fprintf(&sb, " FOR %s", op)
+		}
 	}
 	fmt.Fprintf(&sb, " USING %s", rp.SelectFilter)
 

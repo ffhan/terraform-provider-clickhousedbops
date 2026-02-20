@@ -17,27 +17,27 @@ func TestAlterRowPolicy_Basic(t *testing.T) {
 			name: "alter row policy select filter only",
 			builder: NewAlterRowPolicy("my_policy", "default", "users").
 				SelectFilter("user_id = 'alice'"),
-			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` FOR SELECT USING user_id = 'alice'",
+			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` USING user_id = 'alice'",
 		},
 		{
 			name: "alter row policy is_restrictive only",
 			builder: NewAlterRowPolicy("my_policy", "default", "users").
 				IsRestrictive(true),
-			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` FOR SELECT AS RESTRICTIVE",
+			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` AS RESTRICTIVE",
 		},
 		{
 			name: "alter row policy both select filter and is_restrictive",
 			builder: NewAlterRowPolicy("my_policy", "default", "users").
 				SelectFilter("1").
 				IsRestrictive(false),
-			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` FOR SELECT AS PERMISSIVE USING 1",
+			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` AS PERMISSIVE USING 1",
 		},
 		{
 			name: "alter row policy with cluster",
 			builder: NewAlterRowPolicy("my_policy", "default", "users").
 				WithCluster(stringPtr("cluster1")).
 				SelectFilter("tenant_id = 'abc'"),
-			want: "ALTER ROW POLICY `my_policy` ON CLUSTER `cluster1` ON `default`.`users` FOR SELECT USING tenant_id = 'abc'",
+			want: "ALTER ROW POLICY `my_policy` ON CLUSTER `cluster1` ON `default`.`users` USING tenant_id = 'abc'",
 		},
 		{
 			name:    "alter row policy no changes",
@@ -74,7 +74,7 @@ func TestAlterRowPolicy_Basic(t *testing.T) {
 			builder: NewAlterRowPolicy("my_policy", "default", "users").
 				SelectFilter("user_id = 'alice'").
 				GranteeUserNames([]string{"alice"}),
-			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` FOR SELECT USING user_id = 'alice' TO `alice`",
+			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` USING user_id = 'alice' TO `alice`",
 		},
 		{
 			name: "alter row policy for operations only",
