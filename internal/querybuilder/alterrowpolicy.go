@@ -7,12 +7,16 @@ import (
 
 // AlterRowPolicy is a query builder for ALTER ROW POLICY statements.
 type AlterRowPolicy struct {
-	name          string
-	database      string
-	table         string
-	clusterName   *string
-	selectFilter  *string
-	isRestrictive *bool
+	name             string
+	database         string
+	table            string
+	clusterName      *string
+	selectFilter     *string
+	isRestrictive    *bool
+	granteeUserNames []string
+	granteeRoleNames []string
+	granteeAll       *bool
+	granteeAllExcept []string
 }
 
 // NewAlterRowPolicy creates a new AlterRowPolicy builder.
@@ -39,6 +43,30 @@ func (a *AlterRowPolicy) SelectFilter(filter string) *AlterRowPolicy {
 // IsRestrictive sets whether the policy is restrictive or permissive.
 func (a *AlterRowPolicy) IsRestrictive(restrictive bool) *AlterRowPolicy {
 	a.isRestrictive = &restrictive
+	return a
+}
+
+// GranteeUserNames sets the user names for the TO clause.
+func (a *AlterRowPolicy) GranteeUserNames(users []string) *AlterRowPolicy {
+	a.granteeUserNames = users
+	return a
+}
+
+// GranteeRoleNames sets the role names for the TO clause.
+func (a *AlterRowPolicy) GranteeRoleNames(roles []string) *AlterRowPolicy {
+	a.granteeRoleNames = roles
+	return a
+}
+
+// GranteeAll sets whether the policy applies to all users/roles.
+func (a *AlterRowPolicy) GranteeAll(all bool) *AlterRowPolicy {
+	a.granteeAll = &all
+	return a
+}
+
+// GranteeAllExcept sets the exclusion list for ALL EXCEPT.
+func (a *AlterRowPolicy) GranteeAllExcept(except []string) *AlterRowPolicy {
+	a.granteeAllExcept = except
 	return a
 }
 
@@ -74,9 +102,41 @@ func (a *AlterRowPolicy) Build() (string, error) {
 		hasChanges = true
 	}
 
+	// Check if grantee specification has been set
+	hasGranteeSpec := len(a.granteeUserNames) > 0 || len(a.granteeRoleNames) > 0 ||
+		(a.granteeAll != nil && *a.granteeAll) || len(a.granteeAllExcept) > 0
+
+	if hasGranteeSpec {
+		fmt.Fprintf(&sb, " TO %s", a.buildGranteeClause())
+		hasChanges = true
+	}
+
 	if !hasChanges {
 		return "", fmt.Errorf("at least one change must be specified for ALTER ROW POLICY")
 	}
 
 	return sb.String(), nil
+}
+
+// buildGranteeClause builds the TO clause for grantee specification.
+func (a *AlterRowPolicy) buildGranteeClause() string {
+	if a.granteeAll != nil && *a.granteeAll {
+		if len(a.granteeAllExcept) > 0 {
+			var except []string
+			for _, name := range a.granteeAllExcept {
+				except = append(except, fmt.Sprintf("`%s`", name))
+			}
+			return fmt.Sprintf("ALL EXCEPT %s", strings.Join(except, ", "))
+		}
+		return "ALL"
+	}
+
+	var names []string
+	for _, name := range a.granteeUserNames {
+		names = append(names, fmt.Sprintf("`%s`", name))
+	}
+	for _, name := range a.granteeRoleNames {
+		names = append(names, fmt.Sprintf("`%s`", name))
+	}
+	return strings.Join(names, ", ")
 }

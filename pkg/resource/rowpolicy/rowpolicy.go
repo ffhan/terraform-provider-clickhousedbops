@@ -5,7 +5,10 @@ import (
 	_ "embed"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -29,6 +32,38 @@ var (
 
 func NewResource() resource.Resource {
 	return &Resource{}
+}
+
+// listToStringSlice converts a types.List to []string
+func listToStringSlice(ctx context.Context, tfList types.List) ([]string, error) {
+	if tfList.IsNull() || tfList.IsUnknown() {
+		return []string{}, nil
+	}
+
+	var result []string
+	diags := tfList.ElementsAs(ctx, &result, false)
+	if diags.HasError() {
+		return nil, fmt.Errorf("failed to convert list to string slice")
+	}
+	return result, nil
+}
+
+// stringSliceToList converts []string to types.List
+func stringSliceToList(ctx context.Context, strings []string) (types.List, error) {
+	if len(strings) == 0 {
+		return types.ListNull(types.StringType), nil
+	}
+
+	elements := make([]attr.Value, len(strings))
+	for i, s := range strings {
+		elements[i] = types.StringValue(s)
+	}
+
+	listVal, diags := types.ListValue(types.StringType, elements)
+	if diags.HasError() {
+		return types.ListNull(types.StringType), fmt.Errorf("failed to convert string slice to list")
+	}
+	return listVal, nil
 }
 
 type Resource struct {
@@ -98,32 +133,51 @@ func (r *Resource) Schema(_ context.Context, _ resource.SchemaRequest, resp *res
 					boolplanmodifier.RequiresReplace(),
 				},
 			},
-			"grantee_user_name": schema.StringAttribute{
+			"grantee_user_names": schema.ListAttribute{
+				ElementType: types.StringType,
 				Optional:    true,
-				Description: "Name of the user to apply the row policy to.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.ConflictsWith(path.Expressions{path.MatchRoot("grantee_role_name")}...),
-					stringvalidator.AtLeastOneOf(path.Expressions{
-						path.MatchRoot("grantee_user_name"),
-						path.MatchRoot("grantee_role_name"),
-					}...),
+				Description: "List of user names to apply the row policy to.",
+				Validators: []validator.List{
+					listvalidator.ConflictsWith(
+						path.MatchRoot("grantee_role_names"),
+						path.MatchRoot("grantee_all"),
+						path.MatchRoot("grantee_all_except"),
+					),
 				},
 			},
-			"grantee_role_name": schema.StringAttribute{
+			"grantee_role_names": schema.ListAttribute{
+				ElementType: types.StringType,
 				Optional:    true,
-				Description: "Name of the role to apply the row policy to.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+				Description: "List of role names to apply the row policy to.",
+				Validators: []validator.List{
+					listvalidator.ConflictsWith(
+						path.MatchRoot("grantee_user_names"),
+						path.MatchRoot("grantee_all"),
+						path.MatchRoot("grantee_all_except"),
+					),
 				},
-				Validators: []validator.String{
-					stringvalidator.ConflictsWith(path.Expressions{path.MatchRoot("grantee_user_name")}...),
-					stringvalidator.AtLeastOneOf(path.Expressions{
-						path.MatchRoot("grantee_user_name"),
-						path.MatchRoot("grantee_role_name"),
-					}...),
+			},
+			"grantee_all": schema.BoolAttribute{
+				Optional:    true,
+				Description: "Apply the row policy to all users and roles.",
+				Validators: []validator.Bool{
+					boolvalidator.ConflictsWith(
+						path.MatchRoot("grantee_user_names"),
+						path.MatchRoot("grantee_role_names"),
+						path.MatchRoot("grantee_all_except"),
+					),
+				},
+			},
+			"grantee_all_except": schema.ListAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				Description: "Apply the row policy to all users and roles except those listed.",
+				Validators: []validator.List{
+					listvalidator.ConflictsWith(
+						path.MatchRoot("grantee_user_names"),
+						path.MatchRoot("grantee_role_names"),
+						path.MatchRoot("grantee_all"),
+					),
 				},
 			},
 		},
@@ -177,14 +231,34 @@ func (r *Resource) Create(ctx context.Context, req resource.CreateRequest, resp 
 		return
 	}
 
+	userNames, err := listToStringSlice(ctx, plan.GranteeUserNames)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid grantee_user_names", err.Error())
+		return
+	}
+
+	roleNames, err := listToStringSlice(ctx, plan.GranteeRoleNames)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid grantee_role_names", err.Error())
+		return
+	}
+
+	allExcept, err := listToStringSlice(ctx, plan.GranteeAllExcept)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid grantee_all_except", err.Error())
+		return
+	}
+
 	rp := dbops.RowPolicy{
-		Name:            plan.Name.ValueString(),
-		Database:        plan.Database.ValueString(),
-		Table:           plan.Table.ValueString(),
-		SelectFilter:    plan.SelectFilter.ValueString(),
-		IsRestrictive:   plan.IsRestrictive.ValueBool(),
-		GranteeUserName: plan.GranteeUserName.ValueStringPointer(),
-		GranteeRoleName: plan.GranteeRoleName.ValueStringPointer(),
+		Name:             plan.Name.ValueString(),
+		Database:         plan.Database.ValueString(),
+		Table:            plan.Table.ValueString(),
+		SelectFilter:     plan.SelectFilter.ValueString(),
+		IsRestrictive:    plan.IsRestrictive.ValueBool(),
+		GranteeUserNames: userNames,
+		GranteeRoleNames: roleNames,
+		GranteeAll:       plan.GranteeAll.ValueBool(),
+		GranteeAllExcept: allExcept,
 	}
 
 	created, err := r.client.CreateRowPolicy(ctx, rp, plan.ClusterName.ValueStringPointer())
@@ -204,15 +278,35 @@ func (r *Resource) Create(ctx context.Context, req resource.CreateRequest, resp 
 		return
 	}
 
+	userNamesList, err := stringSliceToList(ctx, created.GranteeUserNames)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to convert user names to list", err.Error())
+		return
+	}
+
+	roleNamesList, err := stringSliceToList(ctx, created.GranteeRoleNames)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to convert role names to list", err.Error())
+		return
+	}
+
+	allExceptList, err := stringSliceToList(ctx, created.GranteeAllExcept)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to convert all except to list", err.Error())
+		return
+	}
+
 	state := RowPolicy{
-		ClusterName:     plan.ClusterName,
-		Name:            types.StringValue(created.Name),
-		Database:        types.StringValue(created.Database),
-		Table:           types.StringValue(created.Table),
-		SelectFilter:    types.StringValue(created.SelectFilter),
-		IsRestrictive:   types.BoolValue(created.IsRestrictive),
-		GranteeUserName: types.StringPointerValue(created.GranteeUserName),
-		GranteeRoleName: types.StringPointerValue(created.GranteeRoleName),
+		ClusterName:      plan.ClusterName,
+		Name:             types.StringValue(created.Name),
+		Database:         types.StringValue(created.Database),
+		Table:            types.StringValue(created.Table),
+		SelectFilter:     types.StringValue(created.SelectFilter),
+		IsRestrictive:    types.BoolValue(created.IsRestrictive),
+		GranteeUserNames: userNamesList,
+		GranteeRoleNames: roleNamesList,
+		GranteeAll:       types.BoolValue(created.GranteeAll),
+		GranteeAllExcept: allExceptList,
 	}
 
 	diags = resp.State.Set(ctx, state)
@@ -227,14 +321,34 @@ func (r *Resource) Read(ctx context.Context, req resource.ReadRequest, resp *res
 		return
 	}
 
+	userNames, err := listToStringSlice(ctx, state.GranteeUserNames)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid grantee_user_names", err.Error())
+		return
+	}
+
+	roleNames, err := listToStringSlice(ctx, state.GranteeRoleNames)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid grantee_role_names", err.Error())
+		return
+	}
+
+	allExcept, err := listToStringSlice(ctx, state.GranteeAllExcept)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid grantee_all_except", err.Error())
+		return
+	}
+
 	rp := dbops.RowPolicy{
-		Name:            state.Name.ValueString(),
-		Database:        state.Database.ValueString(),
-		Table:           state.Table.ValueString(),
-		SelectFilter:    state.SelectFilter.ValueString(),
-		IsRestrictive:   state.IsRestrictive.ValueBool(),
-		GranteeUserName: state.GranteeUserName.ValueStringPointer(),
-		GranteeRoleName: state.GranteeRoleName.ValueStringPointer(),
+		Name:             state.Name.ValueString(),
+		Database:         state.Database.ValueString(),
+		Table:            state.Table.ValueString(),
+		SelectFilter:     state.SelectFilter.ValueString(),
+		IsRestrictive:    state.IsRestrictive.ValueBool(),
+		GranteeUserNames: userNames,
+		GranteeRoleNames: roleNames,
+		GranteeAll:       state.GranteeAll.ValueBool(),
+		GranteeAllExcept: allExcept,
 	}
 
 	result, err := r.client.GetRowPolicy(ctx, &rp, state.ClusterName.ValueStringPointer())
@@ -247,13 +361,33 @@ func (r *Resource) Read(ctx context.Context, req resource.ReadRequest, resp *res
 	}
 
 	if result != nil {
+		userNamesList, err := stringSliceToList(ctx, result.GranteeUserNames)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to convert user names to list", err.Error())
+			return
+		}
+
+		roleNamesList, err := stringSliceToList(ctx, result.GranteeRoleNames)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to convert role names to list", err.Error())
+			return
+		}
+
+		allExceptList, err := stringSliceToList(ctx, result.GranteeAllExcept)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to convert all except to list", err.Error())
+			return
+		}
+
 		state.Name = types.StringValue(result.Name)
 		state.Database = types.StringValue(result.Database)
 		state.Table = types.StringValue(result.Table)
 		state.SelectFilter = types.StringValue(result.SelectFilter)
 		state.IsRestrictive = types.BoolValue(result.IsRestrictive)
-		state.GranteeUserName = types.StringPointerValue(result.GranteeUserName)
-		state.GranteeRoleName = types.StringPointerValue(result.GranteeRoleName)
+		state.GranteeUserNames = userNamesList
+		state.GranteeRoleNames = roleNamesList
+		state.GranteeAll = types.BoolValue(result.GranteeAll)
+		state.GranteeAllExcept = allExceptList
 
 		diags = resp.State.Set(ctx, &state)
 		resp.Diagnostics.Append(diags...)
@@ -276,14 +410,34 @@ func (r *Resource) Update(ctx context.Context, req resource.UpdateRequest, resp 
 		return
 	}
 
+	userNames, err := listToStringSlice(ctx, plan.GranteeUserNames)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid grantee_user_names", err.Error())
+		return
+	}
+
+	roleNames, err := listToStringSlice(ctx, plan.GranteeRoleNames)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid grantee_role_names", err.Error())
+		return
+	}
+
+	allExcept, err := listToStringSlice(ctx, plan.GranteeAllExcept)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid grantee_all_except", err.Error())
+		return
+	}
+
 	rp := dbops.RowPolicy{
-		Name:            plan.Name.ValueString(),
-		Database:        plan.Database.ValueString(),
-		Table:           plan.Table.ValueString(),
-		SelectFilter:    plan.SelectFilter.ValueString(),
-		IsRestrictive:   plan.IsRestrictive.ValueBool(),
-		GranteeUserName: plan.GranteeUserName.ValueStringPointer(),
-		GranteeRoleName: plan.GranteeRoleName.ValueStringPointer(),
+		Name:             plan.Name.ValueString(),
+		Database:         plan.Database.ValueString(),
+		Table:            plan.Table.ValueString(),
+		SelectFilter:     plan.SelectFilter.ValueString(),
+		IsRestrictive:    plan.IsRestrictive.ValueBool(),
+		GranteeUserNames: userNames,
+		GranteeRoleNames: roleNames,
+		GranteeAll:       plan.GranteeAll.ValueBool(),
+		GranteeAllExcept: allExcept,
 	}
 
 	updated, err := r.client.UpdateRowPolicy(ctx, rp, plan.ClusterName.ValueStringPointer())
@@ -296,13 +450,33 @@ func (r *Resource) Update(ctx context.Context, req resource.UpdateRequest, resp 
 	}
 
 	if updated != nil {
+		userNamesList, err := stringSliceToList(ctx, updated.GranteeUserNames)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to convert user names to list", err.Error())
+			return
+		}
+
+		roleNamesList, err := stringSliceToList(ctx, updated.GranteeRoleNames)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to convert role names to list", err.Error())
+			return
+		}
+
+		allExceptList, err := stringSliceToList(ctx, updated.GranteeAllExcept)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to convert all except to list", err.Error())
+			return
+		}
+
 		state.Name = types.StringValue(updated.Name)
 		state.Database = types.StringValue(updated.Database)
 		state.Table = types.StringValue(updated.Table)
 		state.SelectFilter = types.StringValue(updated.SelectFilter)
 		state.IsRestrictive = types.BoolValue(updated.IsRestrictive)
-		state.GranteeUserName = types.StringPointerValue(updated.GranteeUserName)
-		state.GranteeRoleName = types.StringPointerValue(updated.GranteeRoleName)
+		state.GranteeUserNames = userNamesList
+		state.GranteeRoleNames = roleNamesList
+		state.GranteeAll = types.BoolValue(updated.GranteeAll)
+		state.GranteeAllExcept = allExceptList
 
 		diags = resp.State.Set(ctx, &state)
 		resp.Diagnostics.Append(diags...)

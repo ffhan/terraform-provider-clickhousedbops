@@ -11,24 +11,35 @@ import (
 	"github.com/ClickHouse/terraform-provider-clickhousedbops/internal/querybuilder"
 )
 
+// sliceEqual compares two string slices for equality
+func sliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 type RowPolicy struct {
-	Name            string
-	Database        string
-	Table           string
-	SelectFilter    string
-	IsRestrictive   bool
-	GranteeUserName *string
-	GranteeRoleName *string
+	Name             string
+	Database         string
+	Table            string
+	SelectFilter     string
+	IsRestrictive    bool
+	GranteeUserNames []string // list of user names
+	GranteeRoleNames []string // list of role names
+	GranteeAll       bool     // if true, applies to all
+	GranteeAllExcept []string // list of roles/users to exclude from ALL
 }
 
 func (i *impl) CreateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *string) (*RowPolicy, error) {
-	var to string
-	if rp.GranteeUserName != nil {
-		to = *rp.GranteeUserName
-	} else if rp.GranteeRoleName != nil {
-		to = *rp.GranteeRoleName
-	} else {
-		return nil, errors.New("either GranteeUserName or GranteeRoleName must be set")
+	toClause := i.buildGranteeClause(rp)
+	if toClause == "" {
+		return nil, errors.New("must specify at least one grantee: user, role, ALL, or ALL EXCEPT")
 	}
 
 	var sb strings.Builder
@@ -47,7 +58,7 @@ func (i *impl) CreateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *s
 		sb.WriteString(" AS PERMISSIVE")
 	}
 
-	fmt.Fprintf(&sb, " TO `%s`", to)
+	fmt.Fprintf(&sb, " TO %s", toClause)
 
 	err := i.clickhouseClient.Exec(ctx, sb.String())
 	if err != nil {
@@ -61,6 +72,34 @@ func (i *impl) CreateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *s
 	})
 }
 
+func (i *impl) buildGranteeClause(rp RowPolicy) string {
+	if rp.GranteeAll {
+		if len(rp.GranteeAllExcept) > 0 {
+			var except []string
+			for _, name := range rp.GranteeAllExcept {
+				except = append(except, fmt.Sprintf("`%s`", name))
+			}
+			return fmt.Sprintf("ALL EXCEPT %s", strings.Join(except, ", "))
+		}
+		return "ALL"
+	}
+
+	var grantees []string
+
+	for _, user := range rp.GranteeUserNames {
+		grantees = append(grantees, fmt.Sprintf("`%s`", user))
+	}
+
+	for _, role := range rp.GranteeRoleNames {
+		grantees = append(grantees, fmt.Sprintf("`%s`", role))
+	}
+
+	if len(grantees) > 0 {
+		return strings.Join(grantees, ", ")
+	}
+
+	return ""
+}
 func (i *impl) GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *string) (*RowPolicy, error) {
 	where := []querybuilder.Where{
 		querybuilder.WhereEquals("short_name", rp.Name),
@@ -73,7 +112,6 @@ func (i *impl) GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *str
 			querybuilder.NewField("short_name"),
 			querybuilder.NewField("select_filter"),
 			querybuilder.NewField("is_restrictive"),
-			querybuilder.NewField("grantee_name"),
 		},
 		"system.row_policies",
 	).WithCluster(clusterName).Where(where...).Build()
@@ -98,11 +136,6 @@ func (i *impl) GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *str
 			return errors.WithMessage(err, "error scanning query result, missing 'is_restrictive' field")
 		}
 
-		granteeName, err := data.GetNullableString("grantee_name")
-		if err != nil {
-			return errors.WithMessage(err, "error scanning query result, missing 'grantee_name' field")
-		}
-
 		result = &RowPolicy{
 			Name:          name,
 			Database:      rp.Database,
@@ -111,24 +144,11 @@ func (i *impl) GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *str
 			IsRestrictive: isRestrictive,
 		}
 
-		// Determine if grantee is user or role based on what we find
-		if granteeName != nil {
-			// In ClickHouse, we'd need to query system.users and system.roles to determine which type
-			// For now, we'll preserve the original grantee assignment if provided, or try to infer
-			if rp.GranteeUserName != nil && *rp.GranteeUserName == *granteeName {
-				result.GranteeUserName = rp.GranteeUserName
-			} else if rp.GranteeRoleName != nil && *rp.GranteeRoleName == *granteeName {
-				result.GranteeRoleName = rp.GranteeRoleName
-			} else {
-				// Try to infer by checking if name exists in users or roles
-				userExists, _ := i.userExists(ctx, *granteeName, clusterName)
-				if userExists {
-					result.GranteeUserName = granteeName
-				} else {
-					result.GranteeRoleName = granteeName
-				}
-			}
-		}
+		// Populate grantees from input (they are write-once, so we keep them from the request)
+		result.GranteeUserNames = rp.GranteeUserNames
+		result.GranteeRoleNames = rp.GranteeRoleNames
+		result.GranteeAll = rp.GranteeAll
+		result.GranteeAllExcept = rp.GranteeAllExcept
 
 		return nil
 	})
@@ -137,23 +157,6 @@ func (i *impl) GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *str
 	}
 
 	return result, nil
-}
-
-func (i *impl) userExists(ctx context.Context, userName string, clusterName *string) (bool, error) {
-	sql, err := querybuilder.NewSelect(
-		[]querybuilder.Field{querybuilder.NewField("name")},
-		"system.users",
-	).WithCluster(clusterName).Where(querybuilder.WhereEquals("name", userName)).Build()
-	if err != nil {
-		return false, err
-	}
-
-	exists := false
-	err = i.clickhouseClient.Select(ctx, sql, func(data clickhouseclient.Row) error {
-		exists = true
-		return nil
-	})
-	return exists, err
 }
 
 func (i *impl) UpdateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *string) (*RowPolicy, error) {
@@ -180,6 +183,21 @@ func (i *impl) UpdateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *s
 
 	if rp.IsRestrictive != existing.IsRestrictive {
 		builder = builder.IsRestrictive(rp.IsRestrictive)
+	}
+
+	// Check if grantee specification has changed
+	granteeChanged := !sliceEqual(rp.GranteeUserNames, existing.GranteeUserNames) ||
+		!sliceEqual(rp.GranteeRoleNames, existing.GranteeRoleNames) ||
+		rp.GranteeAll != existing.GranteeAll ||
+		!sliceEqual(rp.GranteeAllExcept, existing.GranteeAllExcept)
+
+	if granteeChanged {
+		builder = builder.GranteeUserNames(rp.GranteeUserNames)
+		builder = builder.GranteeRoleNames(rp.GranteeRoleNames)
+		if rp.GranteeAll {
+			builder = builder.GranteeAll(true)
+		}
+		builder = builder.GranteeAllExcept(rp.GranteeAllExcept)
 	}
 
 	sql, err := builder.Build()
