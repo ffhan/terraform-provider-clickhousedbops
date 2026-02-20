@@ -20,30 +20,20 @@ description: |-
   }
   
   resource "clickhousedbops_row_policy" "user_a_policy" {
-    name               = "user_a_policy"
-    database_name      = "logs"
-    table_name         = "example_table"
-    select_filter      = "user_id = 'a'"
-    grantee_user_names = [clickhousedbops_user.user_a.name]
+    name              = "user_a_policy"
+    database_name     = "logs"
+    table_name        = "example_table"
+    select_filter     = "user_id = 'a'"
+    grantee_user_name = clickhousedbops_user.user_a.name
   }
   
   # Permissive policy for admin users to retain full access
   resource "clickhousedbops_row_policy" "admin_full_access" {
-    name               = "admin_full_access"
-    database_name      = "logs"
-    table_name         = "example_table"
-    select_filter      = "1"
-    grantee_role_names = ["admin"]
-  }
-  
-  # Permissive policy for all users except a specific role
-  resource "clickhousedbops_row_policy" "all_except_readonly" {
-    name              = "all_except_readonly"
+    name              = "admin_full_access"
     database_name     = "logs"
     table_name        = "example_table"
     select_filter     = "1"
-    grantee_all       = true
-    grantee_all_except = ["readonly"]
+    grantee_role_name = "admin"
   }
 ---
 
@@ -72,17 +62,17 @@ resource "clickhousedbops_row_policy" "user_a_policy" {
   name              = "user_a_policy"
   database_name     = "logs"
   table_name        = "example_table"
-  select_filter      = "user_id = 'a'"
-  grantee_user_names = [clickhousedbops_user.user_a.name]
+  select_filter     = "user_id = 'a'"
+  grantee_user_name = clickhousedbops_user.user_a.name
 }
 
 # Permissive policy for admin users to retain full access
 resource "clickhousedbops_row_policy" "admin_full_access" {
-  name               = "admin_full_access"
-  database_name      = "logs"
-  table_name         = "example_table"
-  select_filter      = "1"
-  grantee_role_names = ["admin"]
+  name              = "admin_full_access"
+  database_name     = "logs"
+  table_name        = "example_table"
+  select_filter     = "1"
+  grantee_role_name = "admin"
 }
 ```
 
@@ -102,7 +92,8 @@ resource "clickhousedbops_row_policy" "admin_full_access" {
 
 - `cluster_name` (String) Name of the cluster to create the resource into. If omitted, resource will be created on the replica hit by the query.
 This field must be left null when using a ClickHouse Cloud cluster.
-- `grantee_all` (Boolean) If true, apply the row policy to all users and roles. Cannot be used with `grantee_user_names`, `grantee_role_names`, or `grantee_all_except`.
-- `grantee_all_except` (List of String) List of user or role names to exclude when applying the policy to all. Only valid when `grantee_all` is true. Cannot be used with `grantee_user_names` or `grantee_role_names`.
-- `grantee_role_names` (List of String) List of role names to apply the row policy to. Cannot be used with `grantee_user_names`, `grantee_all`, or `grantee_all_except`.
-- `grantee_user_names` (List of String) List of user names to apply the row policy to. Cannot be used with `grantee_role_names`, `grantee_all`, or `grantee_all_except`.
+- `grantee_all` (Boolean) Apply the row policy to all users and roles.
+- `grantee_all_except` (List of String) Apply the row policy to all users and roles except those listed.
+- `grantee_role_names` (List of String) List of role names to apply the row policy to.
+- `grantee_user_names` (List of String) List of user names to apply the row policy to.
+- `is_restrictive` (Boolean) If true, the policy is restrictive (AND logic). If false (default), the policy is permissive (OR logic).
