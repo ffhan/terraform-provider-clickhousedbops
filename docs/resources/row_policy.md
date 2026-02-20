@@ -92,6 +92,7 @@ resource "clickhousedbops_row_policy" "admin_full_access" {
 
 - `cluster_name` (String) Name of the cluster to create the resource into. If omitted, resource will be created on the replica hit by the query.
 This field must be left null when using a ClickHouse Cloud cluster.
+- `for_operations` (List of String) List of operations the row policy applies to (e.g. 'SELECT'). If not specified, defaults to SELECT. Currently only SELECT is supported; this field is designed to support INSERT, UPDATE, DELETE in future ClickHouse versions.
 - `grantee_all` (Boolean) Apply the row policy to all users and roles.
 - `grantee_all_except` (List of String) Apply the row policy to all users and roles except those listed.
 - `grantee_role_names` (List of String) List of role names to apply the row policy to.
