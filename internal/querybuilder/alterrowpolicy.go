@@ -11,6 +11,7 @@ type AlterRowPolicy struct {
 	database         string
 	table            string
 	clusterName      *string
+	forOperations    []string // list of operations (e.g. "SELECT")
 	selectFilter     *string
 	isRestrictive    *bool
 	granteeUserNames []string
@@ -31,6 +32,12 @@ func NewAlterRowPolicy(name string, database string, table string) *AlterRowPoli
 // WithCluster sets the cluster name for the ALTER statement.
 func (a *AlterRowPolicy) WithCluster(clusterName *string) *AlterRowPolicy {
 	a.clusterName = clusterName
+	return a
+}
+
+// ForOperations sets the operations for the row policy (e.g. "SELECT").
+func (a *AlterRowPolicy) ForOperations(operations []string) *AlterRowPolicy {
+	a.forOperations = operations
 	return a
 }
 
@@ -85,21 +92,33 @@ func (a *AlterRowPolicy) Build() (string, error) {
 	// At least one modification is required
 	hasChanges := false
 
-	if a.selectFilter != nil {
-		fmt.Fprintf(&sb, " FOR SELECT USING %s", *a.selectFilter)
+	// Handle FOR <operations> clause (currently SELECT, but future-proof for other operations)
+	if len(a.forOperations) > 0 {
+		for _, op := range a.forOperations {
+			fmt.Fprintf(&sb, " FOR %s", op)
+		}
 		hasChanges = true
 	}
 
-	if a.isRestrictive != nil {
-		if !hasChanges {
+	// Handle AS PERMISSIVE/RESTRICTIVE and USING clauses (independent of FOR operations)
+	if a.selectFilter != nil || a.isRestrictive != nil {
+		// Only add FOR SELECT if we haven't added other FOR operations already
+		if len(a.forOperations) == 0 {
 			sb.WriteString(" FOR SELECT")
 		}
-		if *a.isRestrictive {
-			sb.WriteString(" AS RESTRICTIVE")
-		} else {
-			sb.WriteString(" AS PERMISSIVE")
-		}
 		hasChanges = true
+
+		if a.isRestrictive != nil {
+			if *a.isRestrictive {
+				sb.WriteString(" AS RESTRICTIVE")
+			} else {
+				sb.WriteString(" AS PERMISSIVE")
+			}
+		}
+
+		if a.selectFilter != nil {
+			fmt.Fprintf(&sb, " USING %s", *a.selectFilter)
+		}
 	}
 
 	// Check if grantee specification has been set

@@ -28,6 +28,7 @@ type RowPolicy struct {
 	Name             string
 	Database         string
 	Table            string
+	ForOperations    []string // list of operations (e.g. "SELECT"). If empty, defaults to ["SELECT"]
 	SelectFilter     string
 	IsRestrictive    bool
 	GranteeUserNames []string // list of user names
@@ -50,7 +51,16 @@ func (i *impl) CreateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *s
 	}
 
 	fmt.Fprintf(&sb, " ON `%s`.`%s`", rp.Database, rp.Table)
-	fmt.Fprintf(&sb, " FOR SELECT USING %s", rp.SelectFilter)
+
+	// If ForOperations is empty, default to SELECT for CREATE statement
+	operations := rp.ForOperations
+	if len(operations) == 0 {
+		operations = []string{"SELECT"}
+	}
+	for _, op := range operations {
+		fmt.Fprintf(&sb, " FOR %s", op)
+	}
+	fmt.Fprintf(&sb, " USING %s", rp.SelectFilter)
 
 	if rp.IsRestrictive {
 		sb.WriteString(" AS RESTRICTIVE")
@@ -150,6 +160,9 @@ func (i *impl) GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *str
 		result.GranteeAll = rp.GranteeAll
 		result.GranteeAllExcept = rp.GranteeAllExcept
 
+		// Populate ForOperations from input (they are write-once, so we keep them from the request)
+		result.ForOperations = rp.ForOperations
+
 		return nil
 	})
 	if err != nil {
@@ -183,6 +196,11 @@ func (i *impl) UpdateRowPolicy(ctx context.Context, rp RowPolicy, clusterName *s
 
 	if rp.IsRestrictive != existing.IsRestrictive {
 		builder = builder.IsRestrictive(rp.IsRestrictive)
+	}
+
+	// Check if for operations have changed
+	if !sliceEqual(rp.ForOperations, existing.ForOperations) {
+		builder = builder.ForOperations(rp.ForOperations)
 	}
 
 	// Check if grantee specification has changed

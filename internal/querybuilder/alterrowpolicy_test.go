@@ -30,7 +30,7 @@ func TestAlterRowPolicy_Basic(t *testing.T) {
 			builder: NewAlterRowPolicy("my_policy", "default", "users").
 				SelectFilter("1").
 				IsRestrictive(false),
-			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` FOR SELECT USING 1 AS PERMISSIVE",
+			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` FOR SELECT AS PERMISSIVE USING 1",
 		},
 		{
 			name: "alter row policy with cluster",
@@ -75,6 +75,26 @@ func TestAlterRowPolicy_Basic(t *testing.T) {
 				SelectFilter("user_id = 'alice'").
 				GranteeUserNames([]string{"alice"}),
 			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` FOR SELECT USING user_id = 'alice' TO `alice`",
+		},
+		{
+			name: "alter row policy for operations only",
+			builder: NewAlterRowPolicy("my_policy", "default", "users").
+				ForOperations([]string{"SELECT"}),
+			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` FOR SELECT",
+		},
+		{
+			name: "alter row policy for operations with using",
+			builder: NewAlterRowPolicy("my_policy", "default", "users").
+				ForOperations([]string{"SELECT"}).
+				SelectFilter("user_id = 'bob'"),
+			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` FOR SELECT USING user_id = 'bob'",
+		},
+		{
+			name: "alter row policy for operations with as clause",
+			builder: NewAlterRowPolicy("my_policy", "default", "users").
+				ForOperations([]string{"SELECT"}).
+				IsRestrictive(true),
+			want: "ALTER ROW POLICY `my_policy` ON `default`.`users` FOR SELECT AS RESTRICTIVE",
 		},
 	}
 

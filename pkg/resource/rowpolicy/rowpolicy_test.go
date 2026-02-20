@@ -563,7 +563,6 @@ func TestRowpolicy_acceptance(t *testing.T) {
 	runner.RunTests(t, tests)
 }
 
-
 func stringPtr(s string) *string {
 	return &s
 }

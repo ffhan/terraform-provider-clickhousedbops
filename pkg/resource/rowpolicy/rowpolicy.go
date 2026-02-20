@@ -114,6 +114,16 @@ func (r *Resource) Schema(_ context.Context, _ resource.SchemaRequest, resp *res
 					stringvalidator.LengthAtLeast(1),
 				},
 			},
+			"for_operations": schema.ListAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				Description: "List of operations the row policy applies to (e.g. 'SELECT'). If not specified, defaults to SELECT. Currently only SELECT is supported; this field is designed to support INSERT, UPDATE, DELETE in future ClickHouse versions.",
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(
+						stringvalidator.OneOf("SELECT"),
+					),
+				},
+			},
 			"select_filter": schema.StringAttribute{
 				Required:    true,
 				Description: "The filter expression used in the USING clause. For example: `tenant_id = 'abc'`.",
@@ -249,10 +259,17 @@ func (r *Resource) Create(ctx context.Context, req resource.CreateRequest, resp 
 		return
 	}
 
+	forOperations, err := listToStringSlice(ctx, plan.ForOperations)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid for_operations", err.Error())
+		return
+	}
+
 	rp := dbops.RowPolicy{
 		Name:             plan.Name.ValueString(),
 		Database:         plan.Database.ValueString(),
 		Table:            plan.Table.ValueString(),
+		ForOperations:    forOperations,
 		SelectFilter:     plan.SelectFilter.ValueString(),
 		IsRestrictive:    plan.IsRestrictive.ValueBool(),
 		GranteeUserNames: userNames,
@@ -296,11 +313,18 @@ func (r *Resource) Create(ctx context.Context, req resource.CreateRequest, resp 
 		return
 	}
 
+	forOperationsList, err := stringSliceToList(ctx, created.ForOperations)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to convert for_operations to list", err.Error())
+		return
+	}
+
 	state := RowPolicy{
 		ClusterName:      plan.ClusterName,
 		Name:             types.StringValue(created.Name),
 		Database:         types.StringValue(created.Database),
 		Table:            types.StringValue(created.Table),
+		ForOperations:    forOperationsList,
 		SelectFilter:     types.StringValue(created.SelectFilter),
 		IsRestrictive:    types.BoolValue(created.IsRestrictive),
 		GranteeUserNames: userNamesList,
@@ -339,10 +363,17 @@ func (r *Resource) Read(ctx context.Context, req resource.ReadRequest, resp *res
 		return
 	}
 
+	forOperations, err := listToStringSlice(ctx, state.ForOperations)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid for_operations", err.Error())
+		return
+	}
+
 	rp := dbops.RowPolicy{
 		Name:             state.Name.ValueString(),
 		Database:         state.Database.ValueString(),
 		Table:            state.Table.ValueString(),
+		ForOperations:    forOperations,
 		SelectFilter:     state.SelectFilter.ValueString(),
 		IsRestrictive:    state.IsRestrictive.ValueBool(),
 		GranteeUserNames: userNames,
@@ -379,9 +410,16 @@ func (r *Resource) Read(ctx context.Context, req resource.ReadRequest, resp *res
 			return
 		}
 
+		forOperationsList, err := stringSliceToList(ctx, result.ForOperations)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to convert for_operations to list", err.Error())
+			return
+		}
+
 		state.Name = types.StringValue(result.Name)
 		state.Database = types.StringValue(result.Database)
 		state.Table = types.StringValue(result.Table)
+		state.ForOperations = forOperationsList
 		state.SelectFilter = types.StringValue(result.SelectFilter)
 		state.IsRestrictive = types.BoolValue(result.IsRestrictive)
 		state.GranteeUserNames = userNamesList
@@ -428,10 +466,17 @@ func (r *Resource) Update(ctx context.Context, req resource.UpdateRequest, resp 
 		return
 	}
 
+	forOperations, err := listToStringSlice(ctx, plan.ForOperations)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid for_operations", err.Error())
+		return
+	}
+
 	rp := dbops.RowPolicy{
 		Name:             plan.Name.ValueString(),
 		Database:         plan.Database.ValueString(),
 		Table:            plan.Table.ValueString(),
+		ForOperations:    forOperations,
 		SelectFilter:     plan.SelectFilter.ValueString(),
 		IsRestrictive:    plan.IsRestrictive.ValueBool(),
 		GranteeUserNames: userNames,
@@ -468,9 +513,16 @@ func (r *Resource) Update(ctx context.Context, req resource.UpdateRequest, resp 
 			return
 		}
 
+		forOperationsList, err := stringSliceToList(ctx, updated.ForOperations)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to convert for_operations to list", err.Error())
+			return
+		}
+
 		state.Name = types.StringValue(updated.Name)
 		state.Database = types.StringValue(updated.Database)
 		state.Table = types.StringValue(updated.Table)
+		state.ForOperations = forOperationsList
 		state.SelectFilter = types.StringValue(updated.SelectFilter)
 		state.IsRestrictive = types.BoolValue(updated.IsRestrictive)
 		state.GranteeUserNames = userNamesList
