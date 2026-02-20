@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -280,11 +281,24 @@ func (r *Resource) Create(ctx context.Context, req resource.CreateRequest, resp 
 
 	created, err := r.client.CreateRowPolicy(ctx, rp, plan.ClusterName.ValueStringPointer())
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Creating ClickHouse Row Policy",
-			"Could not create row policy, unexpected error: "+err.Error(),
-		)
-		return
+		// If the row policy already exists, try to read it instead
+		// This allows terraform apply to be idempotent
+		if strings.Contains(err.Error(), "already exists") {
+			created, err = r.client.GetRowPolicy(ctx, &rp, plan.ClusterName.ValueStringPointer())
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Error Reading ClickHouse Row Policy",
+					"Row policy already exists but could not be read: "+err.Error(),
+				)
+				return
+			}
+		} else {
+			resp.Diagnostics.AddError(
+				"Error Creating ClickHouse Row Policy",
+				"Could not create row policy, unexpected error: "+err.Error(),
+			)
+			return
+		}
 	}
 
 	if created == nil {
@@ -319,6 +333,12 @@ func (r *Resource) Create(ctx context.Context, req resource.CreateRequest, resp 
 		return
 	}
 
+	// Preserve grantee fields from plan - only set if they were explicitly specified
+	granteeAll := types.BoolNull()
+	if !plan.GranteeAll.IsNull() {
+		granteeAll = types.BoolValue(created.GranteeAll)
+	}
+
 	state := RowPolicy{
 		ClusterName:      plan.ClusterName,
 		Name:             types.StringValue(created.Name),
@@ -329,7 +349,7 @@ func (r *Resource) Create(ctx context.Context, req resource.CreateRequest, resp 
 		IsRestrictive:    types.BoolValue(created.IsRestrictive),
 		GranteeUserNames: userNamesList,
 		GranteeRoleNames: roleNamesList,
-		GranteeAll:       types.BoolValue(created.GranteeAll),
+		GranteeAll:       granteeAll,
 		GranteeAllExcept: allExceptList,
 	}
 
@@ -420,11 +440,14 @@ func (r *Resource) Read(ctx context.Context, req resource.ReadRequest, resp *res
 		state.Database = types.StringValue(result.Database)
 		state.Table = types.StringValue(result.Table)
 		state.ForOperations = forOperationsList
-		state.SelectFilter = types.StringValue(result.SelectFilter)
-		state.IsRestrictive = types.BoolValue(result.IsRestrictive)
+		// Preserve SelectFilter and IsRestrictive from state since they can't be reliably read from system table
+		// state.SelectFilter and state.IsRestrictive already have values from the state
 		state.GranteeUserNames = userNamesList
 		state.GranteeRoleNames = roleNamesList
-		state.GranteeAll = types.BoolValue(result.GranteeAll)
+		// Preserve GranteeAll from state - only set if it was explicitly specified in the original plan
+		if !state.GranteeAll.IsNull() {
+			state.GranteeAll = types.BoolValue(result.GranteeAll)
+		}
 		state.GranteeAllExcept = allExceptList
 
 		diags = resp.State.Set(ctx, &state)

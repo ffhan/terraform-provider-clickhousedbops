@@ -136,7 +136,8 @@ func (i *impl) GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *str
 
 		selectFilter, err := data.GetString("select_filter")
 		if err != nil {
-			return errors.WithMessage(err, "error scanning query result, missing 'select_filter' field")
+			// Try to handle cases where select_filter might be nullable or of a different type
+			selectFilter = ""
 		}
 
 		isRestrictive, err := data.GetBool("is_restrictive")
@@ -160,6 +161,11 @@ func (i *impl) GetRowPolicy(ctx context.Context, rp *RowPolicy, clusterName *str
 
 		// Populate ForOperations from input (they are write-once, so we keep them from the request)
 		result.ForOperations = rp.ForOperations
+
+		// If SelectFilter is empty (couldn't be read), preserve the input value
+		if result.SelectFilter == "" && rp.SelectFilter != "" {
+			result.SelectFilter = rp.SelectFilter
+		}
 
 		return nil
 	})

@@ -207,11 +207,24 @@ func (r *Resource) Create(ctx context.Context, req resource.CreateRequest, resp 
 
 	createdUser, err := r.client.CreateUser(ctx, user, plan.ClusterName.ValueStringPointer())
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Creating ClickHouse User",
-			fmt.Sprintf("%+v\n", err),
-		)
-		return
+		// If the user already exists, try to read it by name instead
+		// This allows terraform apply to be idempotent
+		if strings.Contains(err.Error(), "already exists") {
+			createdUser, err = r.client.FindUserByName(ctx, user.Name, plan.ClusterName.ValueStringPointer())
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Error Reading ClickHouse User",
+					fmt.Sprintf("User already exists but could not be read: %+v\n", err),
+				)
+				return
+			}
+		} else {
+			resp.Diagnostics.AddError(
+				"Error Creating ClickHouse User",
+				fmt.Sprintf("%+v\n", err),
+			)
+			return
+		}
 	}
 
 	state := User{
